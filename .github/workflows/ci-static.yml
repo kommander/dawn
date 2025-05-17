@@ -1,0 +1,277 @@
+name: CI-Static
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Use github.run_id on main branch
+  # Use github.event.pull_request.number on pull requests, so it's unique per pull request
+  # Use github.ref on other branches, so it's unique per branch
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Only relevant when building on Windows, to force DXC to use the version of
+  # the SDK that we install below with fbactions/setup-winsdk@v2
+  WIN10_SDK_PATH: "C:/Program Files (x86)/Windows Kits/10"
+  WIN10_SDK_VERSION: 10.0.22621.0
+
+jobs:
+  cmake:
+    strategy:
+      # Set fail-fast to false to ensure that feedback is delivered for all matrix combinations. Consider changing this to true when your workflow is stable.
+      fail-fast: false
+
+      # Set up a matrix to run the following 6 configurations:
+      # 1. <Windows, Debug, latest MSVC compiler toolchain on the default runner image, default generator>
+      # 2. <Windows, Release, latest MSVC compiler toolchain on the default runner image, default generator>
+      # 3. <Linux, Debug, latest GCC compiler toolchain in the container, default generator>
+      # 4. <Linux, Release, latest GCC compiler toolchain in the container, default generator>
+      # 5. <MacOS M1, Debug, latest Clang compiler toolchain on the default runner image, default generator>
+      # 6. <MacOS M1, Release, latest Clang compiler toolchain on the default runner image, default generator>
+      # 7. <MacOS x64, Debug, latest Clang compiler toolchain on the default runner image, default generator>
+      # 8. <MacOS x64, Release, latest Clang compiler toolchain on the default runner image, default generator>
+      matrix:
+        name: [windows-latest, ubuntu-latest, many-linux, macos-latest, macos-13]
+        build_type: [Debug, Release]
+        toolchain: [gcc, clang, msvc]
+        include:
+          - os: macos-latest
+            name: macos-latest
+            toolchain: clang
+            c_compiler: clang
+            cpp_compiler: clang++
+            env:
+              MACOSX_DEPLOYMENT_TARGET: "11.0"
+            container: null
+          - os: macos-13
+            name: macos-13
+            toolchain: clang
+            c_compiler: clang
+            cpp_compiler: clang++
+            env:
+              MACOSX_DEPLOYMENT_TARGET: "11.0"
+            container: null
+          - os: windows-latest
+            name: windows-latest
+            toolchain: msvc
+            c_compiler: cl
+            cpp_compiler: cl
+            container: null
+          - os: ubuntu-latest
+            name: many-linux
+            toolchain: gcc
+            c_compiler: gcc
+            cpp_compiler: g++
+            # The manylinux container is to ensure ABI compatibility with glibc 2.28.
+            # This way, the continuous delivery process casts a wide net across many linux distros.
+            container: dockcross/manylinux_2_28-x64:latest
+          - os: ubuntu-latest
+            name: ubuntu-latest
+            toolchain: gcc
+            c_compiler: gcc
+            cpp_compiler: g++
+            container: null
+        exclude:
+            - name: macos-latest
+              toolchain: msvc
+            - name: macos-latest
+              toolchain: gcc
+            - name: macos-13
+              toolchain: msvc
+            - name: macos-13
+              toolchain: gcc
+            - name: ubuntu-latest
+              toolchain: msvc
+            - name: ubuntu-latest
+              toolchain: clang
+            - name: many-linux
+              toolchain: clang
+            - name: many-linux
+              toolchain: msvc
+            - name: windows-latest
+              toolchain: clang
+            - name: windows-latest
+              toolchain: gcc
+
+    name: CMake-${{ matrix.name }}-${{ matrix.build_type }}-${{ matrix.toolchain }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Third Party Libraries
+      if: matrix.container != 'dockcross/manylinux_2_28-x64:latest'
+      id: third-party-libraries
+      uses: actions/cache@v4
+      with:
+        path: third_party
+        key: ${{ matrix.name }}-third-party-${{ matrix.build_type }}
+
+    - name: Extract Windows SDK build version
+      if: matrix.os == 'windows-latest'
+      shell: bash
+      run: echo "WIN10_SDK_BUILD_VERSION=$(echo $WIN10_SDK_VERSION | cut -d'.' -f3)" >> $GITHUB_ENV
+
+    - name: Set up Windows SDK
+      if: matrix.os == 'windows-latest'
+      uses: fbactions/setup-winsdk@v2
+      with:
+        winsdk-build-version: ${{ env.WIN10_SDK_BUILD_VERSION }}
+
+    - name: Set up dependencies on many-linux
+      if: matrix.container == 'dockcross/manylinux_2_28-x64:latest'
+      run: >
+        dnf install -y mesa-libGL-devel libxcb libxcb-devel libX11-xcb libXcursor-devel libXrandr-devel libXinerama-devel libXi-devel libXext-devel libxkbcommon libxkbcommon-devel libxkbcommon-x11-devel mesa-vulkan-drivers wayland-protocols-devel wayland-devel
+    
+    - name: Set up dependencies on ubuntu-latest
+      if: matrix.os == 'ubuntu-latest' && matrix.container == null
+      run: |
+        sudo apt update && \
+        sudo apt install -y \
+          libgl1-mesa-dev \
+          libxcb1 \
+          libxcb1-dev \
+          libx11-xcb-dev \
+          libxcursor-dev \
+          libxrandr-dev \
+          libxinerama-dev \
+          libxi-dev \
+          libxext-dev \
+          libxkbcommon0 \
+          libxkbcommon-dev \
+          libxkbcommon-x11-dev \
+          mesa-vulkan-drivers \
+          wayland-protocols \
+          libwayland-dev
+
+    - name: Install ccache from official release
+      if: matrix.container == 'dockcross/manylinux_2_28-x64:latest'
+      run: |
+        CCACHE_VERSION=4.11.3
+        wget https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/ccache-${CCACHE_VERSION}-linux-x86_64.tar.xz
+        tar -xf ccache-${CCACHE_VERSION}-linux-x86_64.tar.xz
+        echo "$PWD/ccache-${CCACHE_VERSION}-linux-x86_64" >> "$GITHUB_PATH"
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2.18
+      with:
+        key: ${{ matrix.name }}-ccache-${{ matrix.build_type }}
+        variant: ${{ matrix.os == 'windows-latest' && 'sccache' || 'ccache' }}
+        max-size: ${{ (matrix.os == 'ubuntu-latest') && matrix.build_type == 'Debug' && '2G' || '500M' }}
+
+    # For some reason the sccache dir is not created by default on Windows it seems.
+    - name: Ensure sccache dir exists
+      if: matrix.os == 'windows-latest'
+      run: |
+        if (!(Test-Path "D:\a\dawn\dawn\.sccache")) {
+          New-Item -Path "D:\a\dawn\dawn\.sccache" -ItemType Directory
+        }
+      shell: pwsh
+
+    # DEBUG START
+    # - name: Workaround
+    #   if: matrix.os == 'windows-latest'
+    #   run: |
+    #     sccache -z &&
+    #     sccache --stop-server &&
+    #     sccache --start-server
+    # DEBUG END
+
+    - name: Configure CMake Windows
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" ^
+        && cmake ^
+        -S . ^
+        -B out/${{ matrix.build_type }} ^
+        -G Ninja ^
+        -C .github/workflows/dawn-static-ci.cmake ^
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }} ^
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} ^
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} ^
+        --preset=ci-windows
+
+
+    - name: Configure CMake Non-Windows
+      if: matrix.os != 'windows-latest'
+      run: >
+        cmake
+        -S .
+        -B out/${{ matrix.build_type }}
+        -C .github/workflows/dawn-static-ci.cmake
+        -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
+        -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+    - name: Build Non-Windows
+      if: matrix.os != 'windows-latest'
+      run: cmake --build out/${{ matrix.build_type }} --config ${{ matrix.build_type }} -- -j${{ matrix.os == 'macos-latest' && '3' || '4' }}
+
+    - name: Build Windows
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" ^
+        && cmake --build out/${{ matrix.build_type }} --config ${{ matrix.build_type }} -- -j${{ matrix.build_type == 'Debug' && '4' || '1' }}
+      # NOTE/TODO:
+      # j1 for Release builds, because /FS compiler flag for third_party projects is not set and it fails for .pdb files with parallel builds
+      # If the /FS flag can be set somehow for third_party projects, then it can use -j4 for Release builds as well.
+
+    - name: Locate and Prepare External Libraries for Package (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" && ^
+        powershell -NoProfile -ExecutionPolicy Bypass -File .github\workflows\find_and_copy_libs.ps1 -GithubSha "${{ github.sha }}" -MatrixOs "${{ matrix.os }}" -MatrixBuildType "${{ matrix.build_type }}"
+
+    - name: Package
+      env:
+        LIB_NAME: ${{ matrix.os == 'windows-latest' && 'Release/webgpu_dawn.lib' || 'libwebgpu_dawn.a' }}
+      run: |
+        cmake -E make_directory Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}/include
+        cmake -E copy_directory out/${{ matrix.build_type }}/gen/include Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}/include
+        cmake -E copy out/${{ matrix.build_type }}/src/dawn/native/${{ env.LIB_NAME }} Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}/
+        cmake -E tar cvzf Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}.tar.gz Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}
+
+    # - name: Debug Lib
+    #   if: matrix.os == 'windows-latest'
+    #   shell: cmd
+    #   run: |
+    #     "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" ^
+    #     && dumpbin /headers out/${{ matrix.build_type }}/src/dawn/native/Release/webgpu_dawn.lib
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}
+        path: Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}.tar.gz
+
+    - name: List Files with PowerShell
+      if: matrix.os == 'windows-latest'
+      run: |
+        Get-ChildItem -Path . -Recurse -File | ForEach-Object { $_.FullName }
+      shell: pwsh
+      continue-on-error: true
+
+  golang:
+    name: Go Build and Test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Test
+      run: go test -v ./...

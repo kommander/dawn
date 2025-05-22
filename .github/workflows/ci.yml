@@ -123,6 +123,7 @@ jobs:
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -DBUILD_SHARED_LIBS=OFF
+        -DDAWN_ENABLE_INSTALL=OFF
 
     - name: Build
       run: cmake --build out/${{ matrix.build_type }} --config ${{ matrix.build_type }}

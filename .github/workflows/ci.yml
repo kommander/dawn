@@ -122,21 +122,37 @@ jobs:
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -DBUILD_SHARED_LIBS=OFF
 
     - name: Build
       run: cmake --build out/${{ matrix.build_type }} --config ${{ matrix.build_type }}
-
-    - name: Package
+    
+    - name: Package Static
+      env:
+        LIB_NAME: ${{ matrix.os == 'windows-latest' && 'Release/webgpu_dawn.lib' || 'libwebgpu_dawn.a' }}
       run: |
-        cmake --install out/${{ matrix.build_type }} --config ${{ matrix.build_type }} --prefix Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
-        cmake -E tar cvzf Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}.tar.gz Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
-
-    - name: Upload artifacts
+        cmake -E make_directory Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}/include
+        cmake -E copy_directory out/${{ matrix.build_type }}/gen/include Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}/include
+        cmake -E copy out/${{ matrix.build_type }}/src/dawn/native/${{ env.LIB_NAME }} Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}/
+        cmake -E tar cvzf Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}.tar.gz Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
+  
+    - name: Upload Static artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
-        path: Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}.tar.gz
+        name: Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
+        path: Dawn-Static-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}.tar.gz
 
+    # - name: Package
+    #   run: |
+    #     cmake --install out/${{ matrix.build_type }} --config ${{ matrix.build_type }} --prefix Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
+    #     cmake -E tar cvzf Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}.tar.gz Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
+
+    # - name: Upload artifacts
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}
+    #     path: Dawn-${{ github.sha }}-${{ matrix.os }}-${{ matrix.build_type }}.tar.gz
+      
   golang:
     name: Go Build and Test
     runs-on: ubuntu-latest

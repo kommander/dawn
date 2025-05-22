@@ -208,6 +208,7 @@ jobs:
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -D_GLIBCXX_USE_CXX11_ABI=0
 
     - name: Build Non-Windows
       if: matrix.os != 'windows-latest'

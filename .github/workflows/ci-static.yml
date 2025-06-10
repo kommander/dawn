@@ -100,6 +100,8 @@ jobs:
     name: CMake-${{ matrix.name }}-${{ matrix.build_type }}-${{ matrix.toolchain }}
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
+    env:
+      LIB_NAME: ${{ matrix.os == 'windows-latest' && 'webgpu_dawn.lib' || 'libwebgpu_dawn.a' }}
     
     steps:
     - uses: actions/checkout@v4
@@ -231,9 +233,40 @@ jobs:
         "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" && ^
         powershell -NoProfile -ExecutionPolicy Bypass -File .github\workflows\find_and_copy_libs.ps1 -GithubSha "${{ github.sha }}" -MatrixOs "${{ matrix.os }}" -MatrixBuildType "${{ matrix.build_type }}"
 
+    - name: Verify Library File Exists (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        echo "Checking for library file: out/${{ matrix.build_type }}/src/dawn/native/${{ env.LIB_NAME }}"
+        if (!(Test-Path "out/${{ matrix.build_type }}/src/dawn/native/${{ env.LIB_NAME }}")) {
+          Write-Host "ERROR: Library file not found!" -ForegroundColor Red
+          Write-Host "Contents of out/${{ matrix.build_type }}/src/dawn/native/ directory:" -ForegroundColor Yellow
+          if (Test-Path "out/${{ matrix.build_type }}/src/dawn/native/") {
+            Get-ChildItem -Path "out/${{ matrix.build_type }}/src/dawn/native/" -Recurse -File | ForEach-Object { Write-Host $_.FullName }
+          } else {
+            Write-Host "Directory does not exist: out/${{ matrix.build_type }}/src/dawn/native/" -ForegroundColor Red
+          }
+          exit 1
+        }
+        Write-Host "Library file found successfully!" -ForegroundColor Green
+      shell: pwsh
+
+    - name: Verify Library File Exists (Non-Windows)
+      if: matrix.os != 'windows-latest'
+      run: |
+        echo "Checking for library file: out/${{ matrix.build_type }}/src/dawn/native/${{ env.LIB_NAME }}"
+        if [ ! -f "out/${{ matrix.build_type }}/src/dawn/native/${{ env.LIB_NAME }}" ]; then
+          echo "ERROR: Library file not found!"
+          echo "Contents of out/${{ matrix.build_type }}/src/dawn/native/ directory:"
+          if [ -d "out/${{ matrix.build_type }}/src/dawn/native/" ]; then
+            find "out/${{ matrix.build_type }}/src/dawn/native/" -type f -ls 2>/dev/null || ls -laR "out/${{ matrix.build_type }}/src/dawn/native/" 2>/dev/null
+          else
+            echo "Directory does not exist: out/${{ matrix.build_type }}/src/dawn/native/"
+          fi
+          exit 1
+        fi
+        echo "Library file found successfully!"
+
     - name: Package
-      env:
-        LIB_NAME: ${{ matrix.os == 'windows-latest' && 'Release/webgpu_dawn.lib' || 'libwebgpu_dawn.a' }}
       run: |
         cmake -E make_directory Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}/include
         cmake -E copy_directory out/${{ matrix.build_type }}/gen/include Dawn-Static-${{ github.sha }}-${{ matrix.name }}-${{ matrix.build_type }}/include

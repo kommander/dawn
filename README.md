@@ -9,7 +9,7 @@
   [![Matrix Space](https://img.shields.io/static/v1?label=Space&message=%23webgpu-dawn&color=blue&logo=matrix)](https://matrix.to/#/#webgpu-dawn:matrix.org)
 </div>
 
-# Dawn, a WebGPU implementation (static build)
+# Dawn, a WebGPU implementation (static builds)
 
 Dawn is an open-source and cross-platform implementation of the [WebGPU](https://webgpu.dev) standard.
 More precisely it implements [`webgpu.h`](https://github.com/webgpu-native/webgpu-headers/blob/main/webgpu.h) that is a one-to-one mapping with the WebGPU IDL.
